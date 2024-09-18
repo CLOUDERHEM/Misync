@@ -1,8 +1,8 @@
-# Micloud
+# Misync
 
 ## Overview
 
-Xiaomi Cloud Data Sync is a tool designed to help users synchronize their Xiaomi cloud service data with local storage.
+Xiaomi cloud data sync is a tool designed to help users synchronize their Xiaomi cloud service data with local storage.
 Whether you want to back up your data or access it offline, this repository provides a seamless solution for syncing
 your important files.
 
@@ -32,4 +32,4 @@ the [LICENSE](https://github.com/CLOUDERHEM/Misync/blob/main/LICENSE) file for m
 
 ## Contact
 
-For any questions or suggestions, please start a issuse
+For any questions or suggestions, please start a issue
