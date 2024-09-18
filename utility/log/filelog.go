@@ -12,7 +12,7 @@ type FileLog struct {
 }
 
 func NewFileLog(tag, path string) (*FileLog, error) {
-	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
+	err := os.MkdirAll(filepath.ToSlash(filepath.Dir(path)), os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
