@@ -28,7 +28,7 @@ Contributions are welcome! Please follow these steps:
 ## License
 
 This project is licensed under the MIT License. See
-the [LICENSE](https://github.com/CLOUDERHEM/git remote add origin git@github.com:CLOUDERHEM/Misync.git/blob/main/LICENSE) file for more details.
+the [LICENSE](https://github.com/CLOUDERHEM/Misync/blob/main/LICENSE) file for more details.
 
 ## Contact
 
