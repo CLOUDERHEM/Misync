@@ -2,6 +2,10 @@ package misync
 
 import "testing"
 
-func TestPullAndSave(t *testing.T) {
-	PullAndSave()
+func TestPullNotesAndSave(t *testing.T) {
+	PullNotesAndSave()
+}
+
+func TestPullContactsAndSave(t *testing.T) {
+	PullContactsAndSave()
 }
