@@ -9,6 +9,7 @@ import (
 	"github.com/clouderhem/micloud/micloud/recording/recording"
 	"github.com/clouderhem/micloud/utility/parallel"
 	"github.com/clouderhem/misync/consts"
+	"github.com/clouderhem/misync/misync/pull/comm"
 	mdownload "github.com/clouderhem/misync/utility/download"
 	"github.com/clouderhem/misync/utility/excel"
 	mjson "github.com/clouderhem/misync/utility/json"
@@ -110,7 +111,7 @@ func downloadRecordingFiles(rs []recording.Recording) {
 		})
 	log.LogI("download and save recording files size: ", len(outs), " err size: ", len(errs))
 
-	err := saveFailedErrs(errs)
+	err := saveDownloadFailedErrs(errs)
 	if err != nil {
 		log.LogE("cannot save failed rs", err)
 	}
@@ -119,16 +120,11 @@ func downloadRecordingFiles(rs []recording.Recording) {
 	checkFilesSha1(rs)
 }
 
-func saveFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
+func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
 	if len(errs) == 0 {
-		log.LogI("no errs need to be saved")
 		return nil
 	}
-	bytes, err := json.Marshal(errs)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(recordingFailedFilepath, bytes, os.ModePerm)
+	return comm.SaveErrOuts[recording.Recording](recordingFailedFilepath, errs)
 }
 
 func savaRecordingWithFailuresAsJson(mp map[string]*recording.Recording) error {

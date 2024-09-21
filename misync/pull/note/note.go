@@ -7,6 +7,7 @@ import (
 	"github.com/clouderhem/micloud/micloud/note/note"
 	"github.com/clouderhem/micloud/utility/parallel"
 	"github.com/clouderhem/misync/consts"
+	"github.com/clouderhem/misync/misync/pull/comm"
 	mdownload "github.com/clouderhem/misync/utility/download"
 	"github.com/clouderhem/misync/utility/excel"
 	mjson "github.com/clouderhem/misync/utility/json"
@@ -135,19 +136,18 @@ func downloadNoteFiles(files []note.File) {
 		})
 	log.LogI("download and save files size: ", len(outs), " err size: ", len(errs))
 
-	err := saveFailedFilesErrs(errs)
+	err := saveDownloadFailedErrs(errs)
 	if err != nil {
 		log.LogE("cannot save failed files", err)
 	}
 	log.LogI("saved failed files, size: ", len(errs))
 }
 
-func saveFailedFilesErrs(errs []parallel.ErrOut[note.File]) error {
-	bytes, err := json.Marshal(errs)
-	if err != nil {
-		return err
+func saveDownloadFailedErrs(errs []parallel.ErrOut[note.File]) error {
+	if len(errs) == 0 {
+		return nil
 	}
-	return os.WriteFile(fileFailedFilepath, bytes, os.ModePerm)
+	return comm.SaveErrOuts[note.File](fileFailedFilepath, errs)
 }
 
 func getExtFromMimeType(mimeType string) string {
