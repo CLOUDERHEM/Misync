@@ -53,3 +53,14 @@ func PullRecordingsAndSave() {
 		log.Fatal(err)
 	}
 }
+
+func RetryPullRecordingsAndSave() {
+	err := micloud.Init(micloud.Config{CookieFilepath: "/misync/.micloud_cookie"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = recordingsync.ReDownloadFromLocalFailFile()
+	if err != nil {
+		log.Fatal(err)
+	}
+}

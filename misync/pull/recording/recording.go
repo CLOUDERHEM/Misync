@@ -17,6 +17,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -54,8 +55,37 @@ func PullAndSave(singleLimit int) error {
 		log.LogI("saved recordings as jsons, size: ", len(rs))
 	}
 
-	downloadRecordingFiles(rs)
+	failures := downloadRecordingFiles(rs)
+	if len(failures) > 0 {
+		// try download again
+		downloadRecordingFiles(failures)
+	}
 
+	return nil
+}
+
+func ReDownloadFromLocalFailFile() error {
+	file, err := os.OpenFile(recordingSha1FailedFilepath, os.O_RDONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	all, err := io.ReadAll(file)
+	if err != nil {
+		return err
+	}
+	var failures []recording.Recording
+	err = json.Unmarshal(all, &failures)
+	if err != nil {
+		return err
+	}
+	log.LogI("find failures from local file, size: ", len(failures))
+
+	errs := downloadRecordingFiles(failures)
+	if len(failures) > 0 {
+		log.LogI("retry download, all failure size: ", len(failures), " err size: ", len(errs))
+		return errors.New("retry download not all succeed")
+	}
 	return nil
 }
 
@@ -84,10 +114,10 @@ func savaRecordingsAsJson(rs []recording.Recording) error {
 	return os.WriteFile(jsonFilepath, bytes, os.ModePerm)
 }
 
-func downloadRecordingFiles(rs []recording.Recording) {
+func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 	if len(rs) == 0 {
 		log.LogI("no recording files to download")
-		return
+		return nil
 	}
 	log.LogI("starting download recording files")
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -117,7 +147,7 @@ func downloadRecordingFiles(rs []recording.Recording) {
 	}
 	log.LogI("saved failed recording files, size: ", len(errs))
 
-	checkFilesSha1(rs)
+	return checkRecordingFilesSha1(rs)
 }
 
 func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
@@ -127,18 +157,7 @@ func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
 	return comm.SaveErrOuts[recording.Recording](recordingFailedFilepath, errs)
 }
 
-func savaRecordingWithFailuresAsJson(mp map[string]*recording.Recording) error {
-	var rs []recording.Recording
-	for _, v := range mp {
-		if v != nil {
-			rs = append(rs, *v)
-		}
-	}
-	if len(rs) == 0 {
-		log.LogI("no recordings of files with SHA-1 check failures")
-		return nil
-	}
-	log.LogI("save recordings with SHA-1 check failures, size: ", len(rs))
+func savaRecordingWithFailuresAsJson(rs []recording.Recording) error {
 	bytes, err := json.Marshal(rs)
 	if err != nil {
 		return err
@@ -146,59 +165,78 @@ func savaRecordingWithFailuresAsJson(mp map[string]*recording.Recording) error {
 	return os.WriteFile(recordingSha1FailedFilepath, bytes, os.ModePerm)
 }
 
-func checkFilesSha1(rs []recording.Recording) {
+func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 	recordingsMap := make(map[string]*recording.Recording)
 	for i := range rs {
 		recordingsMap[rs[i].Name+".mp3"] = &rs[i]
 	}
-	defer func() {
-		err := savaRecordingWithFailuresAsJson(recordingsMap)
+	group := sync.WaitGroup{}
+	group.Add(1)
+
+	go func() {
+		defer group.Done()
+		log.LogI("starting checking sha1")
+		stat, err := os.Stat(filesDirName)
+		if err != nil || !stat.IsDir() {
+			log.LogE("cannot stat file or is not dir, stop checking sha1", err)
+			return
+		}
+		dir, err := os.OpenFile(filesDirName, os.O_RDONLY, os.ModePerm)
 		if err != nil {
-			log.LogE("cannot save failed rs", err)
+			log.LogE("cannot open file, stop checking sha1", err)
+			return
+		}
+		files, err := dir.ReadDir(-1)
+		if err != nil {
+			log.LogE("cannot read dir, stop checking sha1", err)
+			return
+		}
+		for i := range files {
+			if files[i].IsDir() {
+				continue
+			}
+			file, err := os.Open(filesDirName + "/" + files[i].Name())
+			if err != nil {
+				log.LogE("cannot open file, skip checking hash", err)
+				continue
+			}
+			hash := sha1.New()
+			_, err = io.Copy(hash, file)
+			_ = file.Close()
+			if err != nil {
+				log.LogE("cannot read file, skip checking hash", err)
+				continue
+			}
+			sha1Hash := hash.Sum(nil)
+			r, ok := recordingsMap[filepath.Base(files[i].Name())]
+			if !ok || r == nil {
+				continue
+			}
+			if r.Sha1 != fmt.Sprintf("%x", sha1Hash) {
+				log.LogI("sha1 not match, file: ", files[i].Name())
+			} else {
+				recordingsMap[files[i].Name()] = nil
+			}
 		}
 	}()
+	group.Wait()
 
-	log.LogI("starting checking sha1")
-	stat, err := os.Stat(filesDirName)
-	if err != nil || !stat.IsDir() {
-		log.LogE("cannot stat file or is not dir, stop checking sha1", err)
-		return
+	var failures []recording.Recording
+	for _, v := range recordingsMap {
+		if v != nil {
+			failures = append(failures, *v)
+		}
 	}
-	dir, err := os.OpenFile(filesDirName, os.O_RDONLY, os.ModePerm)
+	if len(failures) == 0 {
+		log.LogI("no recordings of files with SHA-1 check failures")
+		return nil
+	}
+
+	err := savaRecordingWithFailuresAsJson(failures)
 	if err != nil {
-		log.LogE("cannot open file, stop checking sha1", err)
-		return
+		log.LogE("cannot save failed rs", err)
 	}
-	files, err := dir.ReadDir(-1)
-	if err != nil {
-		log.LogE("cannot read dir, stop checking sha1", err)
-		return
-	}
-	for i := range files {
-		if files[i].IsDir() {
-			continue
-		}
-		file, err := os.Open(filesDirName + "/" + files[i].Name())
-		if err != nil {
-			log.LogE("cannot open file, skip checking hash", err)
-			continue
-		}
-		hash := sha1.New()
-		_, err = io.Copy(hash, file)
-		_ = file.Close()
-		if err != nil {
-			log.LogE("cannot read file, skip checking hash", err)
-			continue
-		}
-		sha1Hash := hash.Sum(nil)
-		r, ok := recordingsMap[filepath.Base(files[i].Name())]
-		if !ok || r == nil {
-			continue
-		}
-		if r.Sha1 != fmt.Sprintf("%x", sha1Hash) {
-			log.LogI("sha1 not match, file: ", files[i].Name())
-		} else {
-			recordingsMap[files[i].Name()] = nil
-		}
-	}
+	log.LogI("save recordings with SHA-1 check failures, size: ", len(rs))
+
+	return failures
 }

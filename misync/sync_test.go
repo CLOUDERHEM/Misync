@@ -17,3 +17,7 @@ func TestPullSmsAndSave(t *testing.T) {
 func TestPullRecordingsAndSave(t *testing.T) {
 	PullRecordingsAndSave()
 }
+
+func TestRetryPullRecordingsAndSave(t *testing.T) {
+	RetryPullRecordingsAndSave()
+}
