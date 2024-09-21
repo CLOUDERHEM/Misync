@@ -1,10 +1,8 @@
 package recordingsync
 
 import (
-	"crypto/sha1"
 	"encoding/json"
 	"errors"
-	"fmt"
 	recordingmgr "github.com/clouderhem/micloud/micloud/recording"
 	"github.com/clouderhem/micloud/micloud/recording/recording"
 	"github.com/clouderhem/micloud/utility/parallel"
@@ -16,7 +14,6 @@ import (
 	"io"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -132,6 +129,10 @@ func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 				log.LogE("cannot get recording file url", err)
 				return nil, err
 			}
+			if recordingFileExists(r, filesDirName+"/"+r.Name+".mp3") {
+				log.LogI("file already exists, file name: ", r.Name)
+				return nil, nil
+			}
 			err = mdownload.Download(fileUrl, filesDirName, r.Name+".mp3")
 			if err != nil {
 				log.LogE("cannot download recording file", err)
@@ -148,6 +149,18 @@ func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 	log.LogI("saved failed recording files, size: ", len(errs))
 
 	return checkRecordingFilesSha1(rs)
+}
+
+func recordingFileExists(recording recording.Recording, targetFilePath string) bool {
+	_, err := os.Stat(targetFilePath)
+	if err != nil {
+		return false
+	}
+	sha1, err := comm.GetFileSha1(targetFilePath)
+	if err != nil {
+		return false
+	}
+	return recording.Sha1 == sha1
 }
 
 func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
@@ -175,7 +188,7 @@ func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 
 	go func() {
 		defer group.Done()
-		log.LogI("starting checking sha1")
+		log.LogI("starting checking sha1, size: ", len(rs))
 		stat, err := os.Stat(filesDirName)
 		if err != nil || !stat.IsDir() {
 			log.LogE("cannot stat file or is not dir, stop checking sha1", err)
@@ -195,24 +208,16 @@ func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 			if files[i].IsDir() {
 				continue
 			}
-			file, err := os.Open(filesDirName + "/" + files[i].Name())
+			fileSha1, err := comm.GetFileSha1(filesDirName + "/" + files[i].Name())
 			if err != nil {
-				log.LogE("cannot open file, skip checking hash", err)
+				log.LogE("cannot get sha1 hash, stop checking sha1", err)
 				continue
 			}
-			hash := sha1.New()
-			_, err = io.Copy(hash, file)
-			_ = file.Close()
-			if err != nil {
-				log.LogE("cannot read file, skip checking hash", err)
-				continue
-			}
-			sha1Hash := hash.Sum(nil)
-			r, ok := recordingsMap[filepath.Base(files[i].Name())]
+			r, ok := recordingsMap[files[i].Name()]
 			if !ok || r == nil {
 				continue
 			}
-			if r.Sha1 != fmt.Sprintf("%x", sha1Hash) {
+			if r.Sha1 != fileSha1 {
 				log.LogI("sha1 not match, file: ", files[i].Name())
 			} else {
 				recordingsMap[files[i].Name()] = nil
