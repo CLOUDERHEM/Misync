@@ -9,3 +9,7 @@ func TestPullNotesAndSave(t *testing.T) {
 func TestPullContactsAndSave(t *testing.T) {
 	PullContactsAndSave()
 }
+
+func TestPullSmsAndSave(t *testing.T) {
+	PullSmsAndSave()
+}
