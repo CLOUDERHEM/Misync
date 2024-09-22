@@ -49,7 +49,7 @@ func PullRecordingsAndSave() {
 }
 
 func RetryPullRecordingsAndSave() {
-	err := recordingsync.ReDownloadFromLocalFailFile()
+	err := recordingsync.RedownloadFailedFiles()
 	if err != nil {
 		log.Fatal(err)
 	}

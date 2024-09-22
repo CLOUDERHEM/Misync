@@ -18,50 +18,55 @@ import (
 	"time"
 )
 
-func PullAndSave(singleLimit int) error {
+func PullAndSave(singlePullLimit int) error {
 	var offset = 0
 	var rs []recording.Recording
 	for {
-		recordings, err := recordingmgr.ListRecordings(offset, singleLimit)
+		recordings, err := recordingmgr.ListRecordings(offset, singlePullLimit)
 		if err != nil {
-			log.LogE("cannot pull recordings info", err)
+			log.LogE("cannot pull recordings info, err: ", err)
 			return err
 		}
-		offset += singleLimit
-		if len(recordings) < singleLimit {
+		log.LogI("single pulled recordings, recordings len: ", len(recordings))
+
+		offset += singlePullLimit
+		if len(recordings) < singlePullLimit {
 			break
 		}
 		rs = append(rs, recordings...)
 	}
 	if len(rs) == 0 {
-		return errors.New("no recordings")
+		return errors.New("no recordings found, stop downloading")
 	}
-	log.LogI("pulled all recordings info, size: ", len(rs))
+	log.LogI("pulled all recordings info, recordings len: ", len(rs))
 
 	err := saveRecordingsAsXlsx(rs)
 	if err != nil {
 		log.LogE("cannot save recordings as xlsx", err)
 	} else {
-		log.LogI("saved recordings as xlsx, size: ", len(rs))
+		log.LogI("saved recordings as xlsx, recordings len: ", len(rs))
 	}
 
 	err = savaRecordingsAsJson(rs)
 	if err != nil {
 		log.LogE("cannot save recordings as json", err)
 	} else {
-		log.LogI("saved recordings as jsons, size: ", len(rs))
+		log.LogI("saved recordings as json, recordings len: ", len(rs))
 	}
 
 	failures := downloadRecordingFiles(rs)
 	if len(failures) > 0 {
-		// try download again
+		log.LogI("downloading recording files has errs, errs len: ", len(failures))
+
+		log.LogI("starting downloading the failures again ")
 		downloadRecordingFiles(failures)
 	}
 
 	return nil
 }
 
-func ReDownloadFromLocalFailFile() error {
+func RedownloadFailedFiles() error {
+	log.LogI("starting downloading the failed recording files again")
 	file, err := os.OpenFile(recordingSha1FailedFilepath, os.O_RDONLY, 0666)
 	if err != nil {
 		return err
@@ -76,12 +81,12 @@ func ReDownloadFromLocalFailFile() error {
 	if err != nil {
 		return err
 	}
-	log.LogI("find failures from local file, size: ", len(failures))
+	log.LogI("find failures from local file, failures len: ", len(failures))
 
 	errs := downloadRecordingFiles(failures)
 	if len(failures) > 0 {
-		log.LogI("retry download, all failure size: ", len(failures), " err size: ", len(errs))
-		return errors.New("retry download not all succeed")
+		log.LogI("re download was not fully successful, failures len: ", len(failures), " errs len: ", len(errs))
+		return errors.New("re download was not fully successful")
 	}
 	return nil
 }
@@ -113,12 +118,12 @@ func savaRecordingsAsJson(rs []recording.Recording) error {
 
 func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 	if len(rs) == 0 {
-		log.LogI("no recording files to download")
+		log.LogI("no recordings that need to be downloaded")
 		return nil
 	}
 	log.LogI("starting download recording files")
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
-	outs, errs := parallel.DoParallel[recording.Recording, any](
+	successes, errs := parallel.DoParallel[recording.Recording, any](
 		rs,
 		func(r recording.Recording) (any, error) {
 			time.Sleep(time.Second *
@@ -126,32 +131,33 @@ func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 
 			fileUrl, err := recordingmgr.GetRecordingFileUrl(r.Id)
 			if err != nil {
-				log.LogE("cannot get recording file url", err)
+				log.LogE("cannot get recording file url, err: ", err)
 				return nil, err
 			}
-			if recordingFileExists(r, filesDirName+"/"+r.Name+".mp3") {
+			if isRecordingFileExist(r, filesDirName+"/"+r.Name+".mp3") {
 				log.LogI("file already exists, file name: ", r.Name)
 				return nil, nil
 			}
 			err = mdownload.Download(fileUrl, filesDirName, r.Name+".mp3")
 			if err != nil {
-				log.LogE("cannot download recording file", err)
+				log.LogE("cannot download recording file, err: ", err)
 				return nil, err
 			}
 			return nil, nil
 		})
-	log.LogI("download and save recording files size: ", len(outs), " err size: ", len(errs))
+	log.LogI("downloaded and saved recording files len: ", len(successes), " errs len: ", len(errs))
 
 	err := saveDownloadFailedErrs(errs)
 	if err != nil {
-		log.LogE("cannot save failed rs", err)
+		log.LogE("cannot save the errs of the failed download", err)
+	} else {
+		log.LogI("saved the errs of the failed download, errs len: ", len(errs))
 	}
-	log.LogI("saved failed recording files, size: ", len(errs))
 
 	return checkRecordingFilesSha1(rs)
 }
 
-func recordingFileExists(recording recording.Recording, targetFilePath string) bool {
+func isRecordingFileExist(recording recording.Recording, targetFilePath string) bool {
 	_, err := os.Stat(targetFilePath)
 	if err != nil {
 		return false
@@ -167,7 +173,7 @@ func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
 	return comm.SaveErrOuts[recording.Recording](recordingFailedFilepath, errs)
 }
 
-func savaRecordingWithFailuresAsJson(rs []recording.Recording) error {
+func savaRecordingWithSha1FailedAsJson(rs []recording.Recording) error {
 	bytes, err := json.Marshal(rs)
 	if err != nil {
 		return err
@@ -185,29 +191,30 @@ func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 
 	go func() {
 		defer group.Done()
-		log.LogI("starting checking sha1, size: ", len(rs))
 		stat, err := os.Stat(filesDirName)
 		if err != nil || !stat.IsDir() {
-			log.LogE("cannot stat file or is not dir, stop checking sha1", err)
+			log.LogE("cannot stat file or is not dir, stop sha1 checks", err)
 			return
 		}
 		dir, err := os.OpenFile(filesDirName, os.O_RDONLY, os.ModePerm)
 		if err != nil {
-			log.LogE("cannot open file, stop checking sha1", err)
+			log.LogE("cannot open file, stop sha1 checks", err)
 			return
 		}
 		files, err := dir.ReadDir(-1)
 		if err != nil {
-			log.LogE("cannot read dir, stop checking sha1", err)
+			log.LogE("cannot read dir, stop sha1 checks", err)
 			return
 		}
+		log.LogI("starting checking files sha1, recordings len: ", len(rs),
+			" local files len: ", len(files))
 		for i := range files {
 			if files[i].IsDir() {
 				continue
 			}
 			fileSha1, err := comm.GetFileSha1(filesDirName + "/" + files[i].Name())
 			if err != nil {
-				log.LogE("cannot get sha1 hash, stop checking sha1", err)
+				log.LogE("cannot get sha1 hash, stop sha1 checks", err)
 				continue
 			}
 			r, ok := recordingsMap[files[i].Name()]
@@ -230,11 +237,11 @@ func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 		}
 	}
 
-	err := savaRecordingWithFailuresAsJson(failures)
+	err := savaRecordingWithSha1FailedAsJson(failures)
 	if err != nil {
-		log.LogE("cannot save failed rs", err)
+		log.LogE("cannot save recordings with failed sha1 checks", err)
 	}
-	log.LogI("save recordings with SHA-1 check failures, size: ", len(rs))
+	log.LogI("save recordings with failed sha1 checks, failures len: ", len(failures))
 
 	return failures
 }
