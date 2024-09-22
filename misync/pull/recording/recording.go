@@ -164,9 +164,6 @@ func recordingFileExists(recording recording.Recording, targetFilePath string) b
 }
 
 func saveDownloadFailedErrs(errs []parallel.ErrOut[recording.Recording]) error {
-	if len(errs) == 0 {
-		return nil
-	}
 	return comm.SaveErrOuts[recording.Recording](recordingFailedFilepath, errs)
 }
 
@@ -231,10 +228,6 @@ func checkRecordingFilesSha1(rs []recording.Recording) []recording.Recording {
 		if v != nil {
 			failures = append(failures, *v)
 		}
-	}
-	if len(failures) == 0 {
-		log.LogI("no recordings of files with SHA-1 check failures")
-		return nil
 	}
 
 	err := savaRecordingWithFailuresAsJson(failures)
