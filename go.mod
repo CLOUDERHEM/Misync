@@ -3,7 +3,7 @@ module github.com/clouderhem/misync
 go 1.23.0
 
 require (
-	github.com/clouderhem/micloud v0.0.0-20240922034900-789e473d1ac8
+	github.com/clouderhem/micloud v0.0.0-20240922151815-399b7ff604d6
 	github.com/tidwall/gjson v1.17.3
 	github.com/xuri/excelize/v2 v2.8.1
 )
