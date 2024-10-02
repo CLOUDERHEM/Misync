@@ -138,7 +138,7 @@ func downloadRecordingFiles(rs []recording.Recording) []recording.Recording {
 				log.LogI("file already exists, file name: ", r.Name)
 				return nil, nil
 			}
-			err = mdownload.Download(fileUrl, filesDirName, r.Name+".mp3")
+			err = mdownload.RangeDownload(fileUrl, filesDirName, r.Name+".mp3")
 			if err != nil {
 				log.LogE("cannot download recording file, err: ", err)
 				return nil, err

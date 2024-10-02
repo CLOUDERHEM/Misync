@@ -3,14 +3,15 @@ package mdownload
 import (
 	"errors"
 	"fmt"
-	"github.com/clouderhem/micloud/utility/request"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/clouderhem/micloud/utility/request"
 )
 
-func Download(url string, dir, filename string) error {
+func RangeDownload(url string, dir, filename string) error {
 	err := os.MkdirAll(dir, os.ModePerm)
 	if err != nil {
 		return err
@@ -48,6 +49,29 @@ func Download(url string, dir, filename string) error {
 		if resp.ContentLength < limit {
 			break
 		}
+	}
+	return nil
+}
+
+func RawDownload(req *http.Request, dir, filename string) error {
+	_ = os.MkdirAll(dir, os.ModePerm)
+	file, err := os.Create(filepath.Join(dir, filename))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	resp, err := request.DoRequestNotReadBody(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New(resp.Status)
+	}
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return err
 	}
 	return nil
 }

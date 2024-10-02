@@ -128,7 +128,7 @@ func downloadNoteFiles(files []note.File) {
 			if err != nil {
 				return nil, err
 			}
-			err = mdownload.Download(fileUrl, filesDirName, file.FileId+getExtFromMimeType(file.MimeType))
+			err = mdownload.RangeDownload(fileUrl, filesDirName, file.FileId+getExtFromMimeType(file.MimeType))
 			if err != nil {
 				return nil, err
 			}
