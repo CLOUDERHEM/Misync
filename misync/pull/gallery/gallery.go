@@ -97,6 +97,7 @@ func ListGalleryWrappers(albums []album.Album, singleLimit int) ([]AlbumsWrapper
 			}
 			var totalGalleries []gallery.Gallery
 			for i := range timelines {
+				time.Sleep(time.Millisecond * 300)
 				if timelines[i].Count == 0 {
 					continue
 				}
