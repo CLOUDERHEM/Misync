@@ -21,3 +21,7 @@ func TestPullRecordingsAndSave(t *testing.T) {
 func TestRetryPullRecordingsAndSave(t *testing.T) {
 	RetryPullRecordingsAndSave()
 }
+
+func TestPullGalleriesAndSave(t *testing.T) {
+	PullGalleriesAndSave()
+}

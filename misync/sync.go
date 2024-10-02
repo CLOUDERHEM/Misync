@@ -3,6 +3,7 @@ package misync
 import (
 	"github.com/clouderhem/micloud"
 	contactsync "github.com/clouderhem/misync/misync/pull/contact"
+	gallerysync "github.com/clouderhem/misync/misync/pull/gallery"
 	notesync "github.com/clouderhem/misync/misync/pull/note"
 	recordingsync "github.com/clouderhem/misync/misync/pull/recording"
 
@@ -50,6 +51,13 @@ func PullRecordingsAndSave() {
 
 func RetryPullRecordingsAndSave() {
 	err := recordingsync.RedownloadFailedFiles()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func PullGalleriesAndSave() {
+	err := gallerysync.PullAndSave(100, 10)
 	if err != nil {
 		log.Fatal(err)
 	}

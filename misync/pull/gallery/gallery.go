@@ -5,11 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+
+	mdownload "github.com/clouderhem/misync/utility/download"
 
 	gallerymgr "github.com/clouderhem/micloud/micloud/gallery"
 	"github.com/clouderhem/micloud/micloud/gallery/album"
@@ -17,7 +22,6 @@ import (
 	"github.com/clouderhem/micloud/utility/parallel"
 	"github.com/clouderhem/misync/consts"
 	"github.com/clouderhem/misync/misync/pull/comm"
-	mdownload "github.com/clouderhem/misync/utility/download"
 	"github.com/clouderhem/misync/utility/excel"
 	mjson "github.com/clouderhem/misync/utility/json"
 	mlog "github.com/clouderhem/misync/utility/log"
@@ -64,7 +68,7 @@ func PullAndSave(albumLimit int, singleLimit int) error {
 				" galleries len: ", len(wrappers[i].Galleries))
 		}
 
-		downloadErrs := downloadGalleryFiles(wrappers[i].Album, wrappers[i].Galleries)
+		downloadErrs := downloadFilesAndCheck(wrappers[i].Album, wrappers[i].Galleries)
 		totalGalleriesSize += len(wrappers[i].Galleries)
 		errGalleriesSize += len(downloadErrs)
 	}
@@ -148,39 +152,33 @@ func saveGalleriesAsJson(dirName string, rs []gallery.Gallery) error {
 	return os.WriteFile(path, bytes, os.ModePerm)
 }
 
-func downloadGalleryFiles(album album.Album, galleries []gallery.Gallery) []gallery.Gallery {
+func downloadFilesAndCheck(album album.Album, galleries []gallery.Gallery) []gallery.Gallery {
 	albumName := getAlbumName(&album)
 	log := getLogger(albumName)
 	if len(galleries) == 0 {
 		log.LogI("no gallery files to download")
 		return nil
 	}
+	filesDirPath := filepath.Join(galleryDirPath, albumName, "files")
+
+	var errs []parallel.ErrOut[gallery.Gallery]
+	var successCount int
 
 	log.LogI("starting download gallery files")
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
-	successes, errs := parallel.DoParallel(
-		galleries,
-		func(g gallery.Gallery) (any, error) {
-			time.Sleep(time.Second *
-				time.Duration((random.Intn(len(galleries)/consts.DefaultReqNumInSec+1))+1))
-
-			fileUrl, err := gallerymgr.GetGalleryFileUrl(g.Id)
-			if err != nil {
-				log.LogE("cannot get gallery file url, galleryId: "+g.Id, err)
-				return nil, err
-			}
-			if IsGalleryFileExist(g, filepath.Join(galleryDirPath, albumName, g.FileName)) {
-				log.LogI("gallery file already exists, file name: ", g.FileName)
-				return nil, nil
-			}
-			err = mdownload.Download(fileUrl, filepath.Join(galleryDirPath, albumName), g.FileName)
-			if err != nil {
-				log.LogE("cannot download gallery file, galleryId: "+g.Id, err)
-				return nil, err
-			}
-			return nil, nil
-		})
-	log.LogI("downloaded gallery files, galleries len: ", len(successes), " errs len: ", len(errs))
+	for _, g := range galleries {
+		// rate limit
+		time.Sleep(time.Millisecond * 400)
+		err := downloadGalleryFile(filesDirPath, &g)
+		if err != nil {
+			errs = append(errs, parallel.ErrOut[gallery.Gallery]{
+				In:  g,
+				Err: err,
+			})
+		} else {
+			successCount++
+		}
+	}
+	log.LogI("downloaded gallery files, success len: ", successCount, " errs len: ", len(errs))
 
 	err := saveDownloadFailedErrs(albumName, errs)
 	if err != nil {
@@ -188,10 +186,38 @@ func downloadGalleryFiles(album album.Album, galleries []gallery.Gallery) []gall
 	}
 	log.LogI("saved download failed galleries files, size: ", len(errs))
 
-	return checkGalleryFilesSha1(albumName, galleries)
+	return checkGalleryFilesSha1(filesDirPath, galleries)
 }
 
-func IsGalleryFileExist(gallery gallery.Gallery, targetFilePath string) bool {
+func downloadGalleryFile(filesDirPath string, gallery *gallery.Gallery) error {
+	if isGalleryFileExist(gallery, filepath.Join(filesDirPath, gallery.FileName)) {
+		log.LogI("gallery file already exists, file name: ", gallery.FileName)
+		return nil
+	}
+	storageUrl, err := gallerymgr.GetGalleryStorageUrl(gallery.Id)
+	if err != nil {
+		log.LogE("cannot get gallery storage url, galleryId: "+gallery.Id, err)
+		return err
+	}
+	file, err := gallerymgr.GetGalleryFile(storageUrl)
+	if err != nil {
+		log.LogE("cannot get gallery file, galleryId: "+gallery.Id, err)
+		return err
+	}
+	req, err := createDownloadFileReq(file)
+	if err != nil {
+		log.LogE("cannot create file download request", err)
+		return err
+	}
+	err = mdownload.RawDownload(req, filesDirPath, gallery.FileName)
+	if err != nil {
+		log.LogE("cannot download gallery file, galleryId: "+gallery.Id, err)
+		return err
+	}
+	return nil
+}
+
+func isGalleryFileExist(gallery *gallery.Gallery, targetFilePath string) bool {
 	_, err := os.Stat(targetFilePath)
 	if err != nil {
 		return false
@@ -203,6 +229,18 @@ func IsGalleryFileExist(gallery gallery.Gallery, targetFilePath string) bool {
 	return gallery.Sha1 == sha1
 }
 
+func createDownloadFileReq(file gallery.GalleryFile) (*http.Request, error) {
+	payload := url.Values{}
+	payload.Set("meta", file.Meta)
+	req, err := http.NewRequest(http.MethodPost, file.Url, strings.NewReader(payload.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return req, nil
+}
+
 func saveDownloadFailedErrs(dirName string, errs []parallel.ErrOut[gallery.Gallery]) error {
 	return comm.SaveErrOuts(filepath.Join(galleryDirPath, dirName, galleryFailedFileName), errs)
 }
@@ -211,8 +249,8 @@ func savePullGalleriesFailedErrs(errs []parallel.ErrOut[album.Album]) error {
 	return comm.SaveErrOuts(filepath.Join(galleryDirPath, galleryFailedFileName), errs)
 }
 
-func savaGalleriesWithSha1FailedAsJson(dirName string, galleries []gallery.Gallery) error {
-	path := filepath.Join(galleryDirPath, dirName, gallerySha1FailedFileName)
+func savaGalleriesWithSha1FailedAsJson(dirPath string, galleries []gallery.Gallery) error {
+	path := filepath.Join(dirPath, gallerySha1FailedFileName)
 	createDirIfNeed(path)
 	bytes, err := json.Marshal(galleries)
 	if err != nil {
@@ -221,7 +259,7 @@ func savaGalleriesWithSha1FailedAsJson(dirName string, galleries []gallery.Galle
 	return os.WriteFile(path, bytes, os.ModePerm)
 }
 
-func checkGalleryFilesSha1(dirName string, galleries []gallery.Gallery) (failures []gallery.Gallery) {
+func checkGalleryFilesSha1(filesDirPath string, galleries []gallery.Gallery) (failures []gallery.Gallery) {
 	galleriesMap := make(map[string]*gallery.Gallery)
 	for i := range galleries {
 		galleriesMap[galleries[i].FileName] = &galleries[i]
@@ -229,7 +267,6 @@ func checkGalleryFilesSha1(dirName string, galleries []gallery.Gallery) (failure
 	group := sync.WaitGroup{}
 	group.Add(1)
 
-	filesDirPath := filepath.Join(galleryDirPath, dirName)
 	go func() {
 		defer group.Done()
 		log.LogI("starting checking sha1, galleries size: ", len(galleries))
@@ -281,7 +318,7 @@ func checkGalleryFilesSha1(dirName string, galleries []gallery.Gallery) (failure
 		return nil
 	}
 
-	err := savaGalleriesWithSha1FailedAsJson(dirName, failures)
+	err := savaGalleriesWithSha1FailedAsJson(filepath.Dir(filesDirPath), failures)
 	if err != nil {
 		log.LogE("cannot save failed galleries", err)
 	}
@@ -350,7 +387,7 @@ func getTimeline(albumId string, singleMaxSize int) ([]Timeline, error) {
 func initLogIfNeed(dirName string) {
 	logDirPath := filepath.Join(galleryDirPath, dirName)
 	if _, err := os.Stat(logDirPath); os.IsNotExist(err) {
-		err := os.Mkdir(logDirPath, os.ModePerm)
+		err := os.MkdirAll(logDirPath, os.ModePerm)
 		if err != nil {
 			log.LogE("cannot create log directory", err)
 		}
@@ -371,5 +408,8 @@ func getLogger(dirName string) mlog.Log {
 }
 
 func createDirIfNeed(path string) {
-	os.Mkdir(filepath.Dir(path), os.ModePerm)
+	err := os.MkdirAll(filepath.Dir(path), os.ModePerm)
+	if err != nil {
+		log.LogE("cannot create dir, path: "+path, err)
+	}
 }
